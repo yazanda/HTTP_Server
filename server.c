@@ -20,7 +20,7 @@
 int isNumber(char *);
 char *get_mime_type(char *);
 int parseRequest(char**, int*, int*, int*, int*);
-int parseHeader(char*, char*, char*);
+int parseHeader(char*, char*);
 int startSocketListener(int*, struct sockaddr_in*,int, int);
 void constructResponse(char*, char*, char*);
 int socketRead(int, char*);
@@ -119,8 +119,8 @@ int socketRead(int socket_fd, char* msg){
     return FUNCTION_SUCCESS;
 }
 /*Function parses the first line of socket's request*/
-int parseHeader(char* header, char* path, char* protocol){
-    char method[MAX_REQ];
+int parseHeader(char* header, char* path){
+    char method[MAX_REQ], protocol[MAX_REQ];
     int count = 0;
     char tmp[strlen(header)+1];
     strncpy(tmp, header, strlen(header)+1);
@@ -393,7 +393,7 @@ int dispatchHandle(void *arg){
         return FUNCTION_FAIL;
     }
     char header[MAX_REQ] = {0};
-    char path[MAX_REQ] = {0}, protocol[MAX_REQ] = {0}, toSend[MAX_RES] = {0};
+    char path[MAX_REQ] = {0}, toSend[MAX_RES] = {0};
     char *check = strstr(message, "\r\n");
     if(check == NULL){//error in request.
         response = 400;
@@ -402,7 +402,7 @@ int dispatchHandle(void *arg){
         return FUNCTION_FAIL;
     }
     strncpy(header, message, check-message);
-    if(parseHeader(header, path, protocol) == FUNCTION_FAIL){//error in request.
+    if(parseHeader(header, path) == FUNCTION_FAIL){//error in request.
         constructResponse(toSend, path, timeBuffer);
         socketWrite(socket_fd, toSend);
         return FUNCTION_FAIL;
