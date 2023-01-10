@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include "threadpool.h"
 
-void addWork(threadpool*, work_t*);
 
 /**Create ThreadPool**/
 threadpool* create_threadpool(int num_threads_in_pool){
@@ -15,6 +14,7 @@ threadpool* create_threadpool(int num_threads_in_pool){
         perror("error while allocating memory\n");
         return NULL;
     }
+    //initializing values.
     th_p->num_threads = num_threads_in_pool;
     th_p->qsize = 0;
     th_p->threads = (pthread_t*) calloc(num_threads_in_pool, sizeof(pthread_t));
@@ -48,8 +48,9 @@ threadpool* create_threadpool(int num_threads_in_pool){
         free(th_p);
         return NULL;
     }
-    th_p->shutdown = th_p->dont_accept = 0;
-
+    th_p->shutdown = 0;
+    th_p->dont_accept = 0;
+    //create threads.
     int create_val;
     for (int i = 0; i < th_p->num_threads; i++) {
         create_val = pthread_create((th_p->threads)+i, NULL, do_work, (void *)th_p);
@@ -63,7 +64,6 @@ threadpool* create_threadpool(int num_threads_in_pool){
             return NULL;
         }
     }
-
     return th_p;
 }
 /**Dispatch**/
@@ -71,25 +71,33 @@ void dispatch(threadpool* from_me, dispatch_fn dispatch_to_here, void *arg){
     if(from_me == NULL)
         return;
     pthread_mutex_lock(&(from_me->qlock));
-    if(from_me->dont_accept == 1) return;
+    if(from_me->dont_accept == 1) return;// if thread_pool isn't accept so continue to the next request.
     pthread_mutex_unlock(&(from_me->qlock));
-
+    //create a new work.
     work_t *work = (work_t*) calloc(1, sizeof(work_t));
     if(work == NULL){
         perror("error while allocating memory\n");
         return;
     }
+    //initializing values.
     work->routine = dispatch_to_here;
     work->arg = arg;
     work->next = NULL;
 
     pthread_mutex_lock(&(from_me->qlock));
-    if(from_me->dont_accept == 1){
+    if(from_me->dont_accept == 1){//go to the next request.
         free(work);
         return;
     }
-    addWork(from_me, work);
-    if(pthread_cond_signal(&(from_me->q_not_empty)) != 0) {
+    if(from_me->qsize == 0){//add work to the queue.
+        from_me->qhead = work;
+        from_me->qtail = work;
+    } else {
+        from_me->qtail->next = work;
+        from_me->qtail = from_me->qtail->next;
+    }
+    from_me->qsize++;
+    if(pthread_cond_signal(&(from_me->q_not_empty)) != 0) {//send signal that there are work to do.
         free(work);
         return;
     }
@@ -98,31 +106,35 @@ void dispatch(threadpool* from_me, dispatch_fn dispatch_to_here, void *arg){
 /**Do Work**/
 void* do_work(void* p){
     threadpool *th_p = (threadpool*)p;
+    pthread_mutex_lock(&(th_p->qlock));
     while(1){
-        pthread_mutex_lock(&(th_p->qlock));
-        if(th_p->shutdown != 0){
+        if(th_p->dont_accept != 0){
             pthread_mutex_unlock(&(th_p->qlock));
             pthread_exit(NULL);
         }
-        th_p->qsize--;
-        work_t *temp = th_p->qhead;
-        if (th_p->qsize == 0) {
-            th_p->qhead = NULL;
-            th_p->qtail = NULL;
-
-            if (th_p->dont_accept != 0)
-                pthread_cond_signal(&(th_p->q_empty));
+        if(th_p->qsize == 0) {//wait until there are work to do.
+            pthread_cond_wait(&th_p->q_not_empty, &th_p->qlock);
         }
-        else
-            th_p->qhead = th_p->qhead->next;
-
-        pthread_mutex_unlock(&(th_p->qlock));
-
-        if (temp->routine(temp->arg) < 0)
-            printf("Processing request failed\n");
+        if(th_p->shutdown != 0){//check shutdown another time.
+            pthread_mutex_unlock(&th_p->qlock);
+            pthread_exit(NULL);
+        }
+        work_t *temp = th_p->qhead;
+        if(temp == NULL){//continue until there are a work to do.
+            pthread_mutex_unlock(&th_p->qlock);
+            continue;
+        }
+        th_p->qhead = temp->next;
+        th_p->qsize--;
+        if(th_p->qsize == 0 && th_p->dont_accept != 0){//send signal that there are no works.
+            pthread_cond_signal(&(th_p->q_empty));
+        }
+        if (temp->routine(temp->arg) < 0)//dispatch function.
+            printf("ERROR in Request.\n");
+        printf("Work Done.\n");
         free(temp);
+        pthread_mutex_unlock(&(th_p->qlock));
     }
-    //pthread_exit(NULL);
 }
 /**Destroy ThreadPool**/
 void destroy_threadpool(threadpool* destroyme){
@@ -144,15 +156,4 @@ void destroy_threadpool(threadpool* destroyme){
     pthread_cond_destroy(&(destroyme->q_not_empty));
     free(destroyme->threads);
     free(destroyme);
-}
-//function adds a new work to thread pool's queue.
-void addWork(threadpool* th_p, work_t* newWork){
-    if(th_p->qsize == 0){
-        th_p->qhead = newWork;
-        th_p->qtail = newWork;
-    } else {
-        th_p->qtail->next = newWork;
-        th_p->qtail = th_p->qtail->next;
-    }
-    th_p->qsize++;
 }
